@@ -47,8 +47,29 @@ RGFW_window* win;
 
 #ifdef BENCHMARK
 
-/* XXX this probably isn't very portable */
+/* Platform-specific high-resolution time */
 
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+/* return current time (in seconds) */
+static double
+current_time(void)
+{
+   static LARGE_INTEGER frequency;
+   static int initialized = 0;
+   LARGE_INTEGER counter;
+
+   if (!initialized) {
+      QueryPerformanceFrequency(&frequency);
+      initialized = 1;
+   }
+   QueryPerformanceCounter(&counter);
+   return (double)counter.QuadPart / (double)frequency.QuadPart;
+}
+
+#else /* POSIX */
 #include <sys/time.h>
 #include <unistd.h>
 
@@ -60,6 +81,7 @@ current_time(void)
    (void) gettimeofday(&tv, NULL);
    return (double) tv.tv_sec + tv.tv_usec / 1000000.0;
 }
+#endif /* _WIN32 */
 
 #else /*BENCHMARK*/
 
