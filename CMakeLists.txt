@@ -10,13 +10,7 @@ endif()
 # Options
 # =============================================================================
 option(RGFW_BUILD_EXAMPLES "Build RGFW examples" ON)
-option(RGFW_BUILD_SHARED "Build RGFW as a shared library" ON)
-option(RGFW_BUILD_STATIC "Build RGFW as a static library" OFF)
-
-# If neither shared nor static is requested, fall back to static
-if(NOT RGFW_BUILD_SHARED AND NOT RGFW_BUILD_STATIC)
-    set(RGFW_BUILD_STATIC ON)
-endif()
+option(RGFW_BUILD_SHARED "Build RGFW as a shared library (OFF for static)" ON)
 
 # Platform-specific options
 option(RGFW_USE_WAYLAND "Use Wayland instead of X11 (Linux only)" OFF)
@@ -193,38 +187,22 @@ function(setup_rgfw_target target_name)
     )
 endfunction()
 
-# Static library
-if(RGFW_BUILD_STATIC)
-    add_library(RGFW_static STATIC ${RGFW_GENERATED_SOURCE})
-    setup_rgfw_target(RGFW_static)
-    set_target_properties(RGFW_static PROPERTIES OUTPUT_NAME RGFW)
-    add_library(RGFW::static ALIAS RGFW_static)
-endif()
-
-# Shared library
+# RGFW library — always named "RGFW", type controlled by RGFW_BUILD_SHARED
 if(RGFW_BUILD_SHARED)
-    add_library(RGFW_shared SHARED ${RGFW_GENERATED_SOURCE})
-    setup_rgfw_target(RGFW_shared)
-    set_target_properties(RGFW_shared PROPERTIES
-        OUTPUT_NAME RGFW
+    add_library(RGFW SHARED ${RGFW_GENERATED_SOURCE})
+    set_target_properties(RGFW PROPERTIES
         RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
     )
-    add_library(RGFW::shared ALIAS RGFW_shared)
+else()
+    add_library(RGFW STATIC ${RGFW_GENERATED_SOURCE})
 endif()
+setup_rgfw_target(RGFW)
+add_library(RGFW::RGFW ALIAS RGFW)
 
 # Header-only interface library (for single-header usage)
 add_library(RGFW_header INTERFACE)
 target_include_directories(RGFW_header INTERFACE ${RGFW_INCLUDE_DIR})
 add_library(RGFW::header ALIAS RGFW_header)
-
-# Default RGFW target
-if(RGFW_BUILD_SHARED)
-    add_library(RGFW ALIAS RGFW_shared)
-elseif(RGFW_BUILD_STATIC)
-    add_library(RGFW ALIAS RGFW_static)
-else()
-    add_library(RGFW ALIAS RGFW_header)
-endif()
 
 # =============================================================================
 # Examples
@@ -552,21 +530,13 @@ endif() # RGFW_BUILD_EXAMPLES
 # Install header
 install(FILES RGFW.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-# Install libraries
-if(RGFW_BUILD_STATIC)
-    install(TARGETS RGFW_static
-        EXPORT RGFWTargets
-        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-    )
-endif()
-
-if(RGFW_BUILD_SHARED)
-    install(TARGETS RGFW_shared
-        EXPORT RGFWTargets
-        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-    )
-endif()
+# Install library
+install(TARGETS RGFW
+    EXPORT RGFWTargets
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
+)
 
 # Export targets
 install(EXPORT RGFWTargets
@@ -601,8 +571,11 @@ install(FILES
 message(STATUS "")
 message(STATUS "RGFW Configuration Summary:")
 message(STATUS "  Platform:        ${RGFW_PLATFORM}")
-message(STATUS "  Build shared:    ${RGFW_BUILD_SHARED}")
-message(STATUS "  Build static:    ${RGFW_BUILD_STATIC}")
+if(RGFW_BUILD_SHARED)
+    message(STATUS "  Library type:    SHARED")
+else()
+    message(STATUS "  Library type:    STATIC")
+endif()
 message(STATUS "  Build examples:  ${RGFW_BUILD_EXAMPLES}")
 if(RGFW_PLATFORM STREQUAL "LINUX")
     message(STATUS "  Use Wayland:     ${RGFW_USE_WAYLAND}")
