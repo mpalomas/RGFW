@@ -44,6 +44,7 @@
 #ifdef RGFW_WINDOWS
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <stdbool.h>
 #else /* POSIX */
 #include <sys/time.h>
 #include <unistd.h>
@@ -62,12 +63,12 @@ current_time(void)
    #ifdef RGFW_WINDOWS
 
    static LARGE_INTEGER frequency = {0};
-   static int initialized = 0;
+   static bool initialized = false;
    LARGE_INTEGER counter = {0};
 
    if (!initialized) {
       QueryPerformanceFrequency(&frequency);
-      initialized = 1;
+      initialized = true;
    }
    QueryPerformanceCounter(&counter);
    return (double)counter.QuadPart / (double)frequency.QuadPart;
