@@ -10,8 +10,13 @@ endif()
 # Options
 # =============================================================================
 option(RGFW_BUILD_EXAMPLES "Build RGFW examples" ON)
-option(RGFW_BUILD_SHARED "Build RGFW as a shared library" OFF)
-option(RGFW_BUILD_STATIC "Build RGFW as a static library" ON)
+option(RGFW_BUILD_SHARED "Build RGFW as a shared library" ON)
+option(RGFW_BUILD_STATIC "Build RGFW as a static library" OFF)
+
+# If neither shared nor static is requested, fall back to static
+if(NOT RGFW_BUILD_SHARED AND NOT RGFW_BUILD_STATIC)
+    set(RGFW_BUILD_STATIC ON)
+endif()
 
 # Platform-specific options
 option(RGFW_USE_WAYLAND "Use Wayland instead of X11 (Linux only)" OFF)
@@ -86,7 +91,7 @@ set(RGFW_GENERATED_SOURCE "${CMAKE_CURRENT_BINARY_DIR}/RGFW.c")
 file(WRITE ${RGFW_GENERATED_SOURCE} "#define RGFW_IMPLEMENTATION\n#include \"RGFW.h\"\n")
 
 # Common compile definitions
-set(RGFW_COMPILE_DEFINITIONS RGFW_IMPLEMENTATION)
+set(RGFW_COMPILE_DEFINITIONS RGFW_IMPLEMENTATION RGFW_OPENGL)
 
 # Platform-specific definitions
 if(RGFW_PLATFORM STREQUAL "LINUX")
@@ -109,7 +114,12 @@ function(setup_rgfw_target target_name)
         $<BUILD_INTERFACE:${RGFW_INCLUDE_DIR}>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
     )
-    target_compile_definitions(${target_name} PRIVATE ${RGFW_COMPILE_DEFINITIONS} RGFW_EXPORT)
+    target_compile_definitions(${target_name}
+        PRIVATE ${RGFW_COMPILE_DEFINITIONS} RGFW_EXPORT
+        PUBLIC RGFW_NATIVE
+    )
+
+    target_sources(${target_name} PRIVATE RGFW.c)
 
     if(RGFW_PLATFORM STREQUAL "WINDOWS")
         target_link_libraries(${target_name} PUBLIC gdi32 shell32 user32 advapi32)
@@ -137,6 +147,45 @@ function(setup_rgfw_target target_name)
         endif()
     endif()
 
+    # Release optimizations: enable dead-code stripping
+    if(MSVC)
+        target_compile_options(${target_name} PRIVATE
+            $<$<NOT:$<CONFIG:Debug>>:/Gy>
+        )
+        target_link_options(${target_name} PRIVATE
+            $<$<NOT:$<CONFIG:Debug>>:/OPT:REF /OPT:ICF>
+        )
+    else()
+        target_compile_options(${target_name} PRIVATE
+            $<$<NOT:$<CONFIG:Debug>>:-ffunction-sections -fdata-sections>
+        )
+        if(APPLE)
+            target_link_options(${target_name} PRIVATE
+                $<$<NOT:$<CONFIG:Debug>>:-Wl,-dead_strip>
+            )
+        else()
+            target_link_options(${target_name} PRIVATE
+                $<$<NOT:$<CONFIG:Debug>>:-Wl,--gc-sections>
+            )
+        endif()
+    endif()
+
+    # Strip debug symbols from release shared libraries
+    if(NOT MSVC)
+        get_target_property(_target_type ${target_name} TYPE)
+        if(_target_type STREQUAL "SHARED_LIBRARY")
+            if(APPLE)
+                target_link_options(${target_name} PRIVATE
+                    $<$<NOT:$<CONFIG:Debug>>:-Wl,-x>
+                )
+            else()
+                target_link_options(${target_name} PRIVATE
+                    $<$<NOT:$<CONFIG:Debug>>:-Wl,-s>
+                )
+            endif()
+        endif()
+    endif()
+
     set_target_properties(${target_name} PROPERTIES
         C_STANDARD 99
         C_STANDARD_REQUIRED ON
@@ -156,7 +205,10 @@ endif()
 if(RGFW_BUILD_SHARED)
     add_library(RGFW_shared SHARED ${RGFW_GENERATED_SOURCE})
     setup_rgfw_target(RGFW_shared)
-    set_target_properties(RGFW_shared PROPERTIES OUTPUT_NAME RGFW)
+    set_target_properties(RGFW_shared PROPERTIES
+        OUTPUT_NAME RGFW
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
+    )
     add_library(RGFW::shared ALIAS RGFW_shared)
 endif()
 
@@ -166,10 +218,10 @@ target_include_directories(RGFW_header INTERFACE ${RGFW_INCLUDE_DIR})
 add_library(RGFW::header ALIAS RGFW_header)
 
 # Default RGFW target
-if(RGFW_BUILD_STATIC)
-    add_library(RGFW ALIAS RGFW_static)
-elseif(RGFW_BUILD_SHARED)
+if(RGFW_BUILD_SHARED)
     add_library(RGFW ALIAS RGFW_shared)
+elseif(RGFW_BUILD_STATIC)
+    add_library(RGFW ALIAS RGFW_static)
 else()
     add_library(RGFW ALIAS RGFW_header)
 endif()
@@ -190,8 +242,10 @@ if(RGFW_BUILD_EXAMPLES)
         )
 
         add_executable(${name} ${source_file} ${EXAMPLE_EXTRA_SOURCES})
-        target_include_directories(${name} PRIVATE ${RGFW_INCLUDE_DIR})
-        target_compile_definitions(${name} PRIVATE RGFW_IMPLEMENTATION ${EXAMPLE_DEFINITIONS})
+
+        # Link against the RGFW library (brings includes + platform libs via PUBLIC)
+        target_link_libraries(${name} PRIVATE RGFW)
+        target_compile_definitions(${name} PRIVATE ${EXAMPLE_DEFINITIONS})
 
         if(EXAMPLE_OUTPUT_NAME)
             set_target_properties(${name} PROPERTIES OUTPUT_NAME ${EXAMPLE_OUTPUT_NAME})
@@ -203,43 +257,18 @@ if(RGFW_BUILD_EXAMPLES)
             list(REMOVE_ITEM FILTERED_LIBRARIES m)
         endif()
 
-        # Platform-specific linking
-        if(RGFW_PLATFORM STREQUAL "WINDOWS")
-            target_link_libraries(${name} PRIVATE gdi32 opengl32 ${FILTERED_LIBRARIES})
-            target_compile_definitions(${name} PRIVATE _WIN32_WINNT=0x0501)
-        elseif(RGFW_PLATFORM STREQUAL "MACOS")
-            target_link_libraries(${name} PRIVATE
-                ${COCOA_FRAMEWORK}
-                ${OPENGL_FRAMEWORK}
-                ${IOKIT_FRAMEWORK}
-                ${COREVIDEO_FRAMEWORK}
-                ${FILTERED_LIBRARIES}
-            )
-            if(EXAMPLE_FRAMEWORKS)
-                foreach(fw ${EXAMPLE_FRAMEWORKS})
-                    find_library(${fw}_LIB ${fw})
-                    if(${fw}_LIB)
-                        target_link_libraries(${name} PRIVATE ${${fw}_LIB})
-                    endif()
-                endforeach()
-            endif()
-        elseif(RGFW_PLATFORM STREQUAL "LINUX")
-            if(RGFW_USE_WAYLAND OR RGFW_USE_WAYLAND_X11)
-                target_link_libraries(${name} PRIVATE
-                    ${WAYLAND_LIBRARIES}
-                    ${EGL_LIBRARIES}
-                    GL m
-                    ${FILTERED_LIBRARIES}
-                )
-                target_include_directories(${name} PRIVATE ${WAYLAND_INCLUDE_DIRS} ${EGL_INCLUDE_DIRS})
-                target_compile_definitions(${name} PRIVATE RGFW_WAYLAND)
-                if(RGFW_USE_WAYLAND_X11)
-                    target_link_libraries(${name} PRIVATE X11 Xrandr)
-                    target_compile_definitions(${name} PRIVATE RGFW_X11)
+        # Extra libraries beyond what RGFW provides
+        if(FILTERED_LIBRARIES)
+            target_link_libraries(${name} PRIVATE ${FILTERED_LIBRARIES})
+        endif()
+
+        if(EXAMPLE_FRAMEWORKS)
+            foreach(fw ${EXAMPLE_FRAMEWORKS})
+                find_library(${fw}_LIB ${fw})
+                if(${fw}_LIB)
+                    target_link_libraries(${name} PRIVATE ${${fw}_LIB})
                 endif()
-            else()
-                target_link_libraries(${name} PRIVATE X11 Xrandr GL dl pthread m ${FILTERED_LIBRARIES})
-            endif()
+            endforeach()
         endif()
 
         set_target_properties(${name} PROPERTIES
@@ -334,30 +363,18 @@ if(RGFW_BUILD_EXAMPLES)
     # GL33
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/gl33/gl33.c")
         add_executable(example_gl33 "examples/gl33/gl33.c")
-        target_include_directories(example_gl33 PRIVATE ${RGFW_INCLUDE_DIR})
-        target_compile_definitions(example_gl33 PRIVATE RGFW_IMPLEMENTATION RGFW_OPENGL)
+        target_link_libraries(example_gl33 PRIVATE RGFW)
+        target_compile_definitions(example_gl33 PRIVATE RGFW_OPENGL)
         set_target_properties(example_gl33 PROPERTIES
             OUTPUT_NAME gl33
             C_STANDARD 99
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
         )
         if(RGFW_PLATFORM STREQUAL "WINDOWS")
-            target_link_libraries(example_gl33 PRIVATE gdi32)
-            target_compile_definitions(example_gl33 PRIVATE UNICODE _WIN32_WINNT=0x0501)
-        elseif(RGFW_PLATFORM STREQUAL "MACOS")
-            target_link_libraries(example_gl33 PRIVATE
-                ${COCOA_FRAMEWORK}
-                ${IOKIT_FRAMEWORK}
-                ${COREVIDEO_FRAMEWORK}
-            )
+            target_compile_definitions(example_gl33 PRIVATE UNICODE)
         elseif(RGFW_PLATFORM STREQUAL "LINUX")
             if(RGFW_USE_WAYLAND OR RGFW_USE_WAYLAND_X11)
-                target_link_libraries(example_gl33 PRIVATE
-                    ${WAYLAND_LIBRARIES}
-                    ${EGL_LIBRARIES}
-                    GL wayland-egl m
-                )
-                target_compile_definitions(example_gl33 PRIVATE RGFW_WAYLAND)
+                target_link_libraries(example_gl33 PRIVATE wayland-egl m)
             else()
                 target_link_libraries(example_gl33 PRIVATE m)
             endif()
@@ -387,8 +404,7 @@ if(RGFW_BUILD_EXAMPLES)
     # PortableGL (not for emscripten)
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/portableGL/pgl.c" AND NOT EMSCRIPTEN)
         add_executable(example_portableGL "examples/portableGL/pgl.c")
-        target_include_directories(example_portableGL PRIVATE ${RGFW_INCLUDE_DIR})
-        target_compile_definitions(example_portableGL PRIVATE RGFW_IMPLEMENTATION)
+        target_link_libraries(example_portableGL PRIVATE RGFW)
         # Suppress warnings (different flag for MSVC vs GCC/Clang)
         if(MSVC)
             target_compile_options(example_portableGL PRIVATE /W0)
@@ -400,17 +416,6 @@ if(RGFW_BUILD_EXAMPLES)
             C_STANDARD 99
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
         )
-        if(RGFW_PLATFORM STREQUAL "WINDOWS")
-            target_link_libraries(example_portableGL PRIVATE gdi32)
-        elseif(RGFW_PLATFORM STREQUAL "MACOS")
-            target_link_libraries(example_portableGL PRIVATE
-                ${COCOA_FRAMEWORK}
-                ${IOKIT_FRAMEWORK}
-                ${COREVIDEO_FRAMEWORK}
-            )
-        elseif(RGFW_PLATFORM STREQUAL "LINUX")
-            target_link_libraries(example_portableGL PRIVATE X11 Xrandr dl pthread m)
-        endif()
     endif()
 
     # MicroUI demo
@@ -426,23 +431,12 @@ if(RGFW_BUILD_EXAMPLES)
     # Minimal links
     if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/minimal_links/minimal_links.c")
         add_executable(example_minimal_links "examples/minimal_links/minimal_links.c")
-        target_include_directories(example_minimal_links PRIVATE ${RGFW_INCLUDE_DIR})
-        target_compile_definitions(example_minimal_links PRIVATE RGFW_IMPLEMENTATION)
+        target_link_libraries(example_minimal_links PRIVATE RGFW)
         set_target_properties(example_minimal_links PROPERTIES
             OUTPUT_NAME minimal_links
             C_STANDARD 99
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin"
         )
-        if(RGFW_PLATFORM STREQUAL "WINDOWS")
-            target_link_libraries(example_minimal_links PRIVATE gdi32)
-        elseif(RGFW_PLATFORM STREQUAL "MACOS")
-            target_link_libraries(example_minimal_links PRIVATE
-                ${COCOA_FRAMEWORK}
-                ${COREVIDEO_FRAMEWORK}
-            )
-        elseif(RGFW_PLATFORM STREQUAL "LINUX")
-            target_link_libraries(example_minimal_links PRIVATE X11 Xrandr)
-        endif()
     endif()
 
     # =========================================================================
@@ -452,9 +446,8 @@ if(RGFW_BUILD_EXAMPLES)
     # DirectX 11 (Windows only)
     if(RGFW_PLATFORM STREQUAL "WINDOWS" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/dx11/dx11.c")
         add_executable(example_dx11 "examples/dx11/dx11.c")
-        target_include_directories(example_dx11 PRIVATE ${RGFW_INCLUDE_DIR})
-        target_compile_definitions(example_dx11 PRIVATE RGFW_IMPLEMENTATION RGFW_DIRECTX)
-        target_link_libraries(example_dx11 PRIVATE gdi32 d3d11 dxgi d3dcompiler uuid)
+        target_link_libraries(example_dx11 PRIVATE RGFW d3d11 dxgi d3dcompiler uuid)
+        target_compile_definitions(example_dx11 PRIVATE RGFW_DIRECTX)
         set_target_properties(example_dx11 PROPERTIES
             OUTPUT_NAME dx11
             C_STANDARD 99
@@ -465,12 +458,7 @@ if(RGFW_BUILD_EXAMPLES)
     # Metal (macOS only)
     if(RGFW_PLATFORM STREQUAL "MACOS" AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/metal/metal.m")
         add_executable(example_metal "examples/metal/metal.m")
-        target_include_directories(example_metal PRIVATE ${RGFW_INCLUDE_DIR})
-        target_compile_definitions(example_metal PRIVATE RGFW_IMPLEMENTATION)
-        target_link_libraries(example_metal PRIVATE
-            ${COCOA_FRAMEWORK}
-            ${IOKIT_FRAMEWORK}
-            ${COREVIDEO_FRAMEWORK}
+        target_link_libraries(example_metal PRIVATE RGFW
             ${METAL_FRAMEWORK}
             ${QUARTZCORE_FRAMEWORK}
         )
@@ -484,9 +472,8 @@ if(RGFW_BUILD_EXAMPLES)
     if(NOT RGFW_NO_GLES AND RGFW_PLATFORM STREQUAL "LINUX")
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/gles2/gles2.c")
             add_executable(example_gles2 "examples/gles2/gles2.c")
-            target_include_directories(example_gles2 PRIVATE ${RGFW_INCLUDE_DIR})
-            target_compile_definitions(example_gles2 PRIVATE RGFW_IMPLEMENTATION RGFW_EGL)
-            target_link_libraries(example_gles2 PRIVATE X11 Xrandr GL EGL dl pthread m)
+            target_link_libraries(example_gles2 PRIVATE RGFW GL EGL)
+            target_compile_definitions(example_gles2 PRIVATE RGFW_EGL)
             set_target_properties(example_gles2 PROPERTIES
                 OUTPUT_NAME gles2
                 C_STANDARD 99
@@ -499,9 +486,8 @@ if(RGFW_BUILD_EXAMPLES)
     if(NOT RGFW_NO_EGL AND RGFW_PLATFORM STREQUAL "LINUX")
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/egl/egl.c")
             add_executable(example_egl "examples/egl/egl.c")
-            target_include_directories(example_egl PRIVATE ${RGFW_INCLUDE_DIR})
-            target_compile_definitions(example_egl PRIVATE RGFW_IMPLEMENTATION RGFW_EGL RGFW_OPENGL)
-            target_link_libraries(example_egl PRIVATE X11 Xrandr GL EGL dl pthread m)
+            target_link_libraries(example_egl PRIVATE RGFW GL EGL)
+            target_compile_definitions(example_egl PRIVATE RGFW_EGL RGFW_OPENGL)
             set_target_properties(example_egl PROPERTIES
                 OUTPUT_NAME egl
                 C_STANDARD 99
@@ -516,9 +502,7 @@ if(RGFW_BUILD_EXAMPLES)
             find_library(OSMESA_LIBRARY OSMesa)
             if(OSMESA_LIBRARY)
                 add_executable(example_osmesa "examples/osmesa_demo/osmesa_demo.c")
-                target_include_directories(example_osmesa PRIVATE ${RGFW_INCLUDE_DIR})
-                target_compile_definitions(example_osmesa PRIVATE RGFW_IMPLEMENTATION)
-                target_link_libraries(example_osmesa PRIVATE X11 Xrandr ${OSMESA_LIBRARY} dl pthread m)
+                target_link_libraries(example_osmesa PRIVATE RGFW ${OSMESA_LIBRARY})
                 set_target_properties(example_osmesa PROPERTIES
                     OUTPUT_NAME osmesa_demo
                     C_STANDARD 99
@@ -540,21 +524,9 @@ if(RGFW_BUILD_EXAMPLES)
 
             if(EXISTS "${VERT_SHADER}" AND EXISTS "${FRAG_SHADER}")
                 add_executable(example_vulkan "examples/vk10/vk10.c")
-                target_include_directories(example_vulkan PRIVATE ${RGFW_INCLUDE_DIR} ${Vulkan_INCLUDE_DIRS})
-                target_compile_definitions(example_vulkan PRIVATE RGFW_IMPLEMENTATION RGFW_VULKAN)
-                target_link_libraries(example_vulkan PRIVATE Vulkan::Vulkan)
-
-                if(RGFW_PLATFORM STREQUAL "WINDOWS")
-                    target_link_libraries(example_vulkan PRIVATE gdi32)
-                elseif(RGFW_PLATFORM STREQUAL "MACOS")
-                    target_link_libraries(example_vulkan PRIVATE
-                        ${COCOA_FRAMEWORK}
-                        ${IOKIT_FRAMEWORK}
-                        ${COREVIDEO_FRAMEWORK}
-                    )
-                elseif(RGFW_PLATFORM STREQUAL "LINUX")
-                    target_link_libraries(example_vulkan PRIVATE X11 Xrandr dl pthread m)
-                endif()
+                target_link_libraries(example_vulkan PRIVATE RGFW Vulkan::Vulkan)
+                target_include_directories(example_vulkan PRIVATE ${Vulkan_INCLUDE_DIRS})
+                target_compile_definitions(example_vulkan PRIVATE RGFW_VULKAN)
 
                 set_target_properties(example_vulkan PROPERTIES
                     OUTPUT_NAME vk10

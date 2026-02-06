@@ -28,7 +28,6 @@
 #define RGFW_DEBUG
 #define GL_SILENCE_DEPRECATION
 #define RGFW_OPENGL
-#define RGFW_IMPLEMENTATION
 #include <math.h>
 #include <stdlib.h>
 #include <stdio.h>
