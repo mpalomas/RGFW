@@ -9,7 +9,16 @@ endif()
 # =============================================================================
 # Options
 # =============================================================================
-option(RGFW_BUILD_EXAMPLES "Build RGFW examples" ON)
+# PROJECT_IS_TOP_LEVEL is available since CMake 3.21; provide a fallback
+if(NOT DEFINED PROJECT_IS_TOP_LEVEL)
+    if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+        set(PROJECT_IS_TOP_LEVEL TRUE)
+    else()
+        set(PROJECT_IS_TOP_LEVEL FALSE)
+    endif()
+endif()
+
+option(RGFW_BUILD_EXAMPLES "Build RGFW examples" ${PROJECT_IS_TOP_LEVEL})
 option(RGFW_BUILD_SHARED "Build RGFW as a shared library (OFF for static)" ON)
 
 # Platform-specific options
