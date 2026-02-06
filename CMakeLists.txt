@@ -126,7 +126,7 @@ function(setup_rgfw_target target_name)
 
     if(RGFW_PLATFORM STREQUAL "WINDOWS")
         target_link_libraries(${target_name} PUBLIC gdi32 shell32 user32 advapi32)
-        target_compile_definitions(${target_name} PRIVATE _WIN32_WINNT=0x0501)
+        target_compile_definitions(${target_name} PRIVATE _WIN32_WINNT=0x0600)
     elseif(RGFW_PLATFORM STREQUAL "MACOS")
         target_link_libraries(${target_name} PUBLIC
             ${COCOA_FRAMEWORK}
