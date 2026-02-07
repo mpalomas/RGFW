@@ -40,66 +40,40 @@
 #include <GL/gl.h>
 #endif
 
-#ifdef RGFW_WINDOWS
-#define WIN32_LEAN_AND_MEAN
-#include <windows.h>
-#include <stdbool.h>
-#else /* POSIX */
-#include <sys/time.h>
-#include <unistd.h>
-#endif
-
 RGFW_window* win;
-
-#define BENCHMARK
-
-#ifdef BENCHMARK
 
 /* return current time (in seconds) */
 static double
 current_time(void)
 {
-   #ifdef RGFW_WINDOWS
+   #if defined(RGFW_WINDOWS)
 
    static LARGE_INTEGER frequency = {0};
-   static bool initialized = false;
    LARGE_INTEGER counter = {0};
 
-   if (!initialized) {
+   if (frequency.QuadPart == 0) {
       QueryPerformanceFrequency(&frequency);
-      initialized = true;
    }
    QueryPerformanceCounter(&counter);
    return (double)counter.QuadPart / (double)frequency.QuadPart;
    
-   #else /* POSIX */
+   #elif defined(RGFW_MACOS) || defined(RGFW_UNIX)
    
    struct timeval tv;
    (void) gettimeofday(&tv, NULL);
    return (double) tv.tv_sec + tv.tv_usec / 1000000.0;
    
-   #endif
-}
-
-#else /*BENCHMARK*/
-
-/* dummy */
-static double
-current_time(void)
-{
-   /* update this function for other platforms! */
+   #else /* WASM and other platforms: dummy implementation */
    static double t = 0.0;
-   static int warn = 1;
+   static bool warn = true;
    if (warn) {
       fprintf(stderr, "Warning: current_time() not implemented!!\n");
-      warn = 0;
+      warn = false;
    }
    return t += 1.0;
+   
+   #endif
 }
-
-#endif /*BENCHMARK*/
-
-
 
 #ifndef M_PI
 #define M_PI 3.14159265
