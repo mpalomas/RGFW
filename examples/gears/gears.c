@@ -35,6 +35,7 @@
 #include <RGFW.h>
 
 #ifdef RGFW_MACOS
+#include <sys/time.h>
 #include <OpenGL/gl.h>
 #else
 #include <GL/gl.h>
@@ -474,13 +475,17 @@ main(int argc, char *argv[])
     * We can't be sure we'll get a ConfigureNotify event when the window
     * first appears.
     */
-   reshape(win->w, win->h);
+   int fb_w = 0;
+   int fb_h = 0;
+   RGFW_window_getSizeInPixels(win, &fb_w, &fb_h);
+   reshape(fb_w, fb_h);
 
    while(!RGFW_window_shouldClose(win)){
       RGFW_event event;
       while(RGFW_window_checkEvent(win, &event)){
 		   if (event.type == RGFW_windowResized){
-			   reshape(win->w, win->h);
+            RGFW_window_getSizeInPixels(win, &fb_w, &fb_h);
+			   reshape(fb_w, fb_h);
 		   }else if(event.type == RGFW_keyPressed){
 			   switch(event.key.value){
 				   case RGFW_left:
